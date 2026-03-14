@@ -5,8 +5,20 @@ import type { Device, UnitInfo } from "../backend";
 import type { ControlsType, CradlepointModel } from "../backend";
 import { useActor } from "./useActor";
 
-const QUERY_RETRY_ATTEMPTS = 5;
-const QUERY_RETRY_DELAY = 2000;
+const QUERY_RETRY_ATTEMPTS = 2;
+const QUERY_RETRY_DELAY = 1000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(
+        () => reject(new Error(`Request timed out after ${ms}ms`)),
+        ms,
+      ),
+    ),
+  ]);
+}
 
 // Read-only query for all devices with enhanced fail-safe error handling and restart recovery
 export function useGetAllDevices() {
@@ -25,7 +37,10 @@ export function useGetAllDevices() {
         "[useGetAllDevices] Fetching all devices from production backend canister (f4pwe-iiaaa-aaaau-actnq-cai)...",
       );
       try {
-        const devices = await actor.getAllDevices(username, password);
+        const devices = await withTimeout(
+          actor.getAllDevices(username, password),
+          15000,
+        );
         console.log(
           `[useGetAllDevices] ✓ Successfully fetched ${devices.length} devices from backend`,
         );
@@ -95,7 +110,10 @@ export function useGetActiveDevices() {
         "[useGetActiveDevices] Fetching active devices from production backend canister...",
       );
       try {
-        const devices = await actor.getActiveDevices(username, password);
+        const devices = await withTimeout(
+          actor.getActiveDevices(username, password),
+          15000,
+        );
         console.log(
           `[useGetActiveDevices] ✓ Successfully fetched ${devices.length} active devices`,
         );

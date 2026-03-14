@@ -1,4 +1,3 @@
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -8,8 +7,8 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { AlertCircle, Plus, Search, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Plus, Search, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ControlsType } from "../backend";
 import DeviceFormDialog from "../components/DeviceFormDialog";
 import DeviceGrid from "../components/DeviceGrid";
@@ -25,6 +24,7 @@ import {
 type FilterType = "all" | ControlsType;
 
 const DEVICES_PER_PAGE = 12;
+const LOADING_TIMEOUT_MS = 12000;
 
 export default function Dashboard() {
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
@@ -32,6 +32,8 @@ export default function Dashboard() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedFilter, setSelectedFilter] = useState<FilterType>("all");
   const [currentPage, setCurrentPage] = useState(1);
+  const [loadingTimedOut, setLoadingTimedOut] = useState(false);
+  const loadingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Automatically fetch all device data in the background after authentication
   const {
@@ -47,14 +49,30 @@ export default function Dashboard() {
   } = useGetAllDevices();
   const { data: currentTime } = useGetCurrentTime();
 
-  // Determine if we're in initial loading state (for internal logging only)
+  // Determine if we're in initial loading state
   const isInitialLoading =
     (loadingActive || loadingAll) && allDevices.length === 0;
 
-  // Check if there's a connection error
-  const hasConnectionError = useMemo(() => {
-    return !!(activeError || allError);
-  }, [activeError, allError]);
+  // Start a timeout so the loading spinner never shows forever
+  useEffect(() => {
+    if (isInitialLoading && !loadingTimedOut) {
+      loadingTimerRef.current = setTimeout(() => {
+        setLoadingTimedOut(true);
+      }, LOADING_TIMEOUT_MS);
+    } else {
+      // Loading finished before the timeout — clear it
+      if (loadingTimerRef.current) {
+        clearTimeout(loadingTimerRef.current);
+        loadingTimerRef.current = null;
+      }
+    }
+    return () => {
+      if (loadingTimerRef.current) {
+        clearTimeout(loadingTimerRef.current);
+        loadingTimerRef.current = null;
+      }
+    };
+  }, [isInitialLoading, loadingTimedOut]);
 
   // Silent background logging for connection status (no UI display)
   useEffect(() => {
@@ -75,7 +93,7 @@ export default function Dashboard() {
   }, [isInitialLoading]);
 
   useEffect(() => {
-    if (hasConnectionError) {
+    if (activeError || allError) {
       console.log("═══════════════════════════════════════════════════════");
       console.log("❌ BACKEND CONNECTION ERROR");
       console.log("═══════════════════════════════════════════════════════");
@@ -86,7 +104,7 @@ export default function Dashboard() {
       );
       console.log("═══════════════════════════════════════════════════════");
     }
-  }, [hasConnectionError]);
+  }, [activeError, allError]);
 
   // Log successful data fetch
   useEffect(() => {
@@ -138,7 +156,9 @@ export default function Dashboard() {
   }, [activeTab, activeDevices, expiredDevices]);
 
   const currentDevices = getCurrentDevices();
-  const isLoading = activeTab === "active" ? loadingActive : loadingAll;
+  const isLoadingRaw = activeTab === "active" ? loadingActive : loadingAll;
+  // Cap spinner to LOADING_TIMEOUT_MS — after that, show whatever we have (or empty state)
+  const isLoading = isLoadingRaw && !loadingTimedOut;
 
   // Filter devices by search query and type, then sort alphabetically by Job Name for active devices
   const filteredDevices = useMemo(() => {
@@ -252,32 +272,6 @@ export default function Dashboard() {
 
       <main className="flex-1 px-3 py-3 sm:px-4 sm:py-4">
         <div className="mx-auto max-w-7xl space-y-3">
-          {/* Connection Error Alert - Only show if there's an actual error, not during initial loading */}
-          {hasConnectionError && !isInitialLoading && (
-            <Alert variant="destructive" className="border-red-200 bg-red-50">
-              <AlertCircle className="h-4 w-4 text-red-600" />
-              <AlertTitle className="text-red-900 font-semibold">
-                Backend Connection Failed
-              </AlertTitle>
-              <AlertDescription className="text-red-800">
-                <div className="space-y-2">
-                  <p>
-                    Unable to connect to the production backend canister. Please
-                    check your internet connection and try refreshing the page.
-                  </p>
-                  <p className="text-sm">
-                    If the canister was recently restarted, it may take a moment
-                    to become available again.
-                  </p>
-                  <p className="text-xs text-red-700">
-                    Your localStorage data is preserved and will be available
-                    when connection is restored.
-                  </p>
-                </div>
-              </AlertDescription>
-            </Alert>
-          )}
-
           <Tabs
             value={activeTab}
             onValueChange={(value) =>
