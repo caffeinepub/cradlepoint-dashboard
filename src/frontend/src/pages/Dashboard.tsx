@@ -184,10 +184,9 @@ export default function Dashboard() {
     return filteredDevices.slice(startIndex, endIndex);
   }, [filteredDevices, currentPage]);
 
-  // Calculate filter counts for all active devices (including expired)
+  // Calculate filter counts for active devices
   const filterCounts = useMemo(() => {
     const counts = {
-      all: activeDevices.length,
       [ControlsType.niagara]: 0,
       [ControlsType.reliable]: 0,
       [ControlsType.stock]: 0,
@@ -340,14 +339,6 @@ export default function Dashboard() {
 
               {/* Filter Buttons */}
               <div className="flex flex-wrap gap-2">
-                <Button
-                  variant={selectedFilter === "all" ? "default" : "outline"}
-                  onClick={() => handleFilterChange("all")}
-                  className="h-8 rounded-full px-3 text-[13px]"
-                  size="sm"
-                >
-                  All ({filterCounts.all})
-                </Button>
                 <Button
                   variant={
                     selectedFilter === ControlsType.niagara
