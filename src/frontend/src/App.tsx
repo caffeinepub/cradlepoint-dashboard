@@ -1,5 +1,5 @@
 import { Toaster } from "@/components/ui/sonner";
-import { useAuth } from "./hooks/useAuth";
+import { useAuth } from "@/hooks/useAuth";
 import Dashboard from "./pages/Dashboard";
 import LoginPage from "./pages/LoginPage";
 
