@@ -3,9 +3,9 @@ import List "mo:core/List";
 import Time "mo:core/Time";
 import Runtime "mo:core/Runtime";
 import Iter "mo:core/Iter";
-import Nat "mo:core/Nat";
 import AccessControl "authorization/access-control";
 import Principal "mo:core/Principal";
+import HttpOutcall "http-outcalls/outcall";
 
 
 
@@ -67,11 +67,25 @@ actor {
     username : Text;
   };
 
+  type NetCloudKeyStatus = {
+    hasKeys : Bool;
+    lastSyncTime : Int;
+    lastSyncStatus : Text;
+  };
+
   // -------------------------------------------------------
   // STABLE STORAGE — survives every canister upgrade/redeploy
   // -------------------------------------------------------
   var stableDevices : [(Nat, Device)] = [];
   var nextDeviceId : Nat = 1;
+
+  // NetCloud API key stable storage
+  var netCloudCpApiId : Text = "";
+  var netCloudCpApiKey : Text = "";
+  var netCloudEcmApiId : Text = "";
+  var netCloudEcmApiKey : Text = "";
+  var lastNetCloudSyncTime : Int = 0;
+  var lastNetCloudSyncStatus : Text = "";
 
   // Runtime map — loaded from stable storage on startup
   let devices = Map.empty<Nat, Device>();
@@ -98,6 +112,11 @@ actor {
   // Hardcoded admin credentials
   let adminUsername = "Admin";
   let adminPassword = "Adams2014!";
+
+  // HTTP transform function required for outcalls (must be query)
+  public query func transform(input : HttpOutcall.TransformationInput) : async HttpOutcall.TransformationOutput {
+    HttpOutcall.transform(input);
+  };
 
   // Access Control Functions (required by instructions)
   public shared ({ caller }) func initializeAccessControl() : async () {
@@ -144,8 +163,134 @@ actor {
     };
   };
 
+  // -------------------------------------------------------
+  // NETCLOUD API KEY MANAGEMENT
+  // -------------------------------------------------------
+
+  // Save NetCloud API keys (authenticated)
+  public shared func saveNetCloudKeys(
+    username : Text,
+    password : Text,
+    cpApiId : Text,
+    cpApiKey : Text,
+    ecmApiId : Text,
+    ecmApiKey : Text,
+  ) : async () {
+    authorizeUser(username, password);
+    netCloudCpApiId := cpApiId;
+    netCloudCpApiKey := cpApiKey;
+    netCloudEcmApiId := ecmApiId;
+    netCloudEcmApiKey := ecmApiKey;
+  };
+
+  // Get NetCloud key status — does NOT expose raw key values
+  public query func getNetCloudKeyStatus(username : Text, password : Text) : async NetCloudKeyStatus {
+    authorizeUser(username, password);
+    {
+      hasKeys = netCloudCpApiId != "" and netCloudCpApiKey != "";
+      lastSyncTime = lastNetCloudSyncTime;
+      lastSyncStatus = lastNetCloudSyncStatus;
+    };
+  };
+
+  // Simple JSON helper: extract IP+connected pairs from Cradlepoint API response
+  // Response format: {"data":[{"id":"...","ip_address":"1.2.3.4","connected":true,...},...], ...}
+  private func parseRouterStatuses(body : Text) : [(Text, Bool)] {
+    let results = List.empty<(Text, Bool)>();
+    // Split by object boundaries to isolate individual router records
+    let chunks = body.split(#text "},{");
+    for (chunk in chunks) {
+      // Extract IP address value
+      var ip : Text = "";
+      var hasIp : Bool = false;
+      let ipMarker = "ip_address\":\"";
+      let ipMarkerSpaced = "ip_address\": \"";
+      let marker = if (chunk.contains(#text ipMarker)) {
+        ipMarker;
+      } else {
+        ipMarkerSpaced;
+      };
+      if (chunk.contains(#text marker)) {
+        let parts = chunk.split(#text marker);
+        let _ = parts.next();
+        switch (parts.next()) {
+          case (?afterMarker) {
+            let ipParts = afterMarker.split(#text "\"");
+            switch (ipParts.next()) {
+              case (?ipValue) {
+                if (ipValue != "") {
+                  ip := ipValue;
+                  hasIp := true;
+                };
+              };
+              case (null) {};
+            };
+          };
+          case (null) {};
+        };
+      };
+      // Extract connected status
+      let isConnected = chunk.contains(#text "\"connected\":true") or
+        chunk.contains(#text "\"connected\": true");
+      if (hasIp) {
+        results.add((ip, isConnected));
+      };
+    };
+    results.toArray();
+  };
+
+  // Poll NetCloud API and update device statuses
+  public shared func pollNetCloud(username : Text, password : Text) : async Text {
+    authorizeUser(username, password);
+    if (netCloudCpApiId == "" or netCloudCpApiKey == "") {
+      return "Error: API keys not configured. Please go to NetCloud Settings to add your keys.";
+    };
+    let url = "https://www.cradlepointecm.com/api/v2/routers/?format=json&limit=500";
+    let headers : [HttpOutcall.Header] = [
+      { name = "X-CP-API-ID"; value = netCloudCpApiId },
+      { name = "X-CP-API-KEY"; value = netCloudCpApiKey },
+      { name = "X-ECM-API-ID"; value = netCloudEcmApiId },
+      { name = "X-ECM-API-KEY"; value = netCloudEcmApiKey },
+      { name = "Content-Type"; value = "application/json" },
+    ];
+    let responseBody = try {
+      await HttpOutcall.httpGetRequest(url, headers, transform);
+    } catch (e) {
+      let errMsg = "Error connecting to NetCloud: " # e.message();
+      lastNetCloudSyncStatus := errMsg;
+      return errMsg;
+    };
+    // Parse routers from response
+    let routerStatuses = parseRouterStatuses(responseBody);
+    var updatedCount : Nat = 0;
+    var onlineCount : Nat = 0;
+    var offlineCount : Nat = 0;
+    // Update matching devices by IP address
+    for ((routerIp, isConnected) in routerStatuses.vals()) {
+      for ((id, device) in devices.entries()) {
+        if (device.ipAddress == routerIp) {
+          let nowOffline = not isConnected;
+          if (device.offline != nowOffline) {
+            updatedCount += 1;
+            devices.add(id, { device with offline = nowOffline; lastModified = Time.now() });
+          };
+          if (isConnected) { onlineCount += 1 } else { offlineCount += 1 };
+        };
+      };
+    };
+    let total = routerStatuses.size();
+    let syncMsg = "Synced " # total.toText() # " routers from NetCloud. " #
+      onlineCount.toText() # " online, " # offlineCount.toText() # " offline. " #
+      updatedCount.toText() # " device(s) updated.";
+    lastNetCloudSyncTime := Time.now();
+    lastNetCloudSyncStatus := syncMsg;
+    syncMsg;
+  };
+
+  // -------------------------------------------------------
   // CRUD Operations - All require authentication
-  public shared ({ caller }) func addDevice(
+  // -------------------------------------------------------
+  public shared ({ caller = _ }) func addDevice(
     username : Text,
     password : Text,
     jobName : Text,
@@ -205,7 +350,7 @@ actor {
     device.id;
   };
 
-  public shared ({ caller }) func updateDevice(
+  public shared ({ caller = _ }) func updateDevice(
     username : Text,
     password : Text,
     id : Nat,
@@ -268,7 +413,7 @@ actor {
     };
   };
 
-  public shared ({ caller }) func toggleDeviceStatus(username : Text, password : Text, id : Nat) : async () {
+  public shared ({ caller = _ }) func toggleDeviceStatus(username : Text, password : Text, id : Nat) : async () {
     authorizeUser(username, password);
 
     switch (devices.get(id)) {
@@ -280,7 +425,7 @@ actor {
     };
   };
 
-  public shared ({ caller }) func deleteDevice(username : Text, password : Text, id : Nat) : async () {
+  public shared ({ caller = _ }) func deleteDevice(username : Text, password : Text, id : Nat) : async () {
     authorizeUser(username, password);
 
     if (not devices.containsKey(id)) {
@@ -406,7 +551,7 @@ actor {
   };
 
   // Public authentication endpoint for login validation
-  public shared ({ caller }) func authenticate(username : Text, password : Text) : async Bool {
+  public shared ({ caller = _ }) func authenticate(username : Text, password : Text) : async Bool {
     if (username == adminUsername and password == adminPassword) {
       return true;
     };

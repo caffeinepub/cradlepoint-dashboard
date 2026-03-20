@@ -363,6 +363,70 @@ export function useValidateIpAddress(
   });
 }
 
+// Query for NetCloud API key status and last sync info
+export function useNetCloudStatus() {
+  const { actor, isFetching } = useActor();
+  const { username, password } = getCredentials();
+
+  return useQuery<{
+    hasKeys: boolean;
+    lastSyncTime: bigint;
+    lastSyncStatus: string;
+  }>({
+    queryKey: ["netCloudStatus"],
+    queryFn: async () => {
+      if (!actor) {
+        return { hasKeys: false, lastSyncTime: BigInt(0), lastSyncStatus: "" };
+      }
+      try {
+        // Cast to any because backendInterface is a generated protected file
+        return await (actor as any).getNetCloudKeyStatus(username, password);
+      } catch {
+        return { hasKeys: false, lastSyncTime: BigInt(0), lastSyncStatus: "" };
+      }
+    },
+    enabled: !!actor && !isFetching,
+    staleTime: 0,
+    refetchInterval: 60000,
+  });
+}
+
+// Mutation for polling NetCloud API
+export function usePollNetCloud() {
+  const { actor } = useActor();
+  const queryClient = useQueryClient();
+  const { username, password } = getCredentials();
+
+  return useMutation({
+    mutationFn: async () => {
+      if (!actor) throw new Error("Backend not available. Please refresh.");
+      // Cast to any because backendInterface is a generated protected file
+      const result: string = await (actor as any).pollNetCloud(
+        username,
+        password,
+      );
+      return result;
+    },
+    onSuccess: async (result: string) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["allDevices"] }),
+        queryClient.invalidateQueries({ queryKey: ["activeDevices"] }),
+        queryClient.invalidateQueries({ queryKey: ["inactiveDevices"] }),
+        queryClient.invalidateQueries({ queryKey: ["deviceCounts"] }),
+        queryClient.invalidateQueries({ queryKey: ["netCloudStatus"] }),
+      ]);
+      if (result.startsWith("Error:")) {
+        toast.error(result);
+      } else {
+        toast.success(result || "NetCloud sync complete.");
+      }
+    },
+    onError: (error: Error) => {
+      toast.error(`NetCloud poll failed: ${error.message || "Unknown error"}`);
+    },
+  });
+}
+
 // Mutation for adding devices - requires authentication, prevents writes during initial load
 export function useAddDevice() {
   const { actor } = useActor();

@@ -91,11 +91,15 @@ export interface _SERVICE {
   >,
   'getExpiredDevices' : ActorMethod<[string, string], Array<Device>>,
   'getInactiveDevices' : ActorMethod<[string, string], Array<Device>>,
+  'getNetCloudKeyStatus' : ActorMethod<[string, string], { 'hasKeys' : boolean, 'lastSyncTime' : bigint, 'lastSyncStatus' : string }>,
   'getUserProfile' : ActorMethod<[Principal], [] | [UserProfile]>,
   'initializeAccessControl' : ActorMethod<[], undefined>,
   'isCallerAdmin' : ActorMethod<[], boolean>,
+  'pollNetCloud' : ActorMethod<[string, string], string>,
   'saveCallerUserProfile' : ActorMethod<[UserProfile], undefined>,
+  'saveNetCloudKeys' : ActorMethod<[string, string, string, string, string, string], undefined>,
   'toggleDeviceStatus' : ActorMethod<[string, string, bigint], undefined>,
+  'transform' : ActorMethod<[any], any>,
   'updateDevice' : ActorMethod<
     [
       string,

@@ -7,24 +7,43 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { Plus, Search, X } from "lucide-react";
+import { Loader2, Plus, RefreshCw, Search, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ControlsType } from "../backend";
 import DeviceFormDialog from "../components/DeviceFormDialog";
 import DeviceGrid from "../components/DeviceGrid";
 import Footer from "../components/Footer";
 import Header from "../components/Header";
+import NetCloudSettingsDialog from "../components/NetCloudSettingsDialog";
 import {
   useGetActiveDevices,
   useGetAllDevices,
   useGetCurrentTime,
   useGetInactiveDevices,
+  useNetCloudStatus,
+  usePollNetCloud,
 } from "../hooks/useQueries";
 
 type FilterType = "all" | ControlsType;
 
 const DEVICES_PER_PAGE = 12;
 const LOADING_TIMEOUT_MS = 12000;
+
+function formatLastSync(lastSyncTime: bigint): string {
+  if (lastSyncTime === BigInt(0)) return "never";
+  // lastSyncTime is in nanoseconds
+  const ms = Number(lastSyncTime / BigInt(1_000_000));
+  const diffMs = Date.now() - ms;
+  const diffMin = Math.floor(diffMs / 60000);
+  if (diffMin < 1) return "just now";
+  if (diffMin === 1) return "1 minute ago";
+  if (diffMin < 60) return `${diffMin} minutes ago`;
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr === 1) return "1 hour ago";
+  if (diffHr < 24) return `${diffHr} hours ago`;
+  const diffDay = Math.floor(diffHr / 24);
+  return `${diffDay} day${diffDay > 1 ? "s" : ""} ago`;
+}
 
 export default function Dashboard() {
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
@@ -48,6 +67,10 @@ export default function Dashboard() {
     error: allError,
   } = useGetAllDevices();
   const { data: currentTime } = useGetCurrentTime();
+
+  // NetCloud status and poll mutation
+  const { data: netCloudStatus } = useNetCloudStatus();
+  const pollNetCloud = usePollNetCloud();
 
   // Determine if we're in initial loading state
   const isInitialLoading =
@@ -261,6 +284,15 @@ export default function Dashboard() {
     [],
   );
 
+  const lastSyncLabel = netCloudStatus
+    ? `Last synced: ${formatLastSync(netCloudStatus.lastSyncTime)}`
+    : "Last synced: never";
+
+  const pollError =
+    pollNetCloud.data && String(pollNetCloud.data).startsWith("Error:")
+      ? String(pollNetCloud.data)
+      : null;
+
   return (
     <div className="flex min-h-screen flex-col bg-gray-50">
       <Header
@@ -286,16 +318,66 @@ export default function Dashboard() {
 
             {/* Active Devices Tab - Shows all active devices including expired */}
             <TabsContent value="active" className="space-y-3">
-              {/* Add Device Button - Full width on mobile, right-aligned on desktop */}
-              <div className="flex justify-end">
+              {/* Top action row: Add Device button + NetCloud controls */}
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-end">
                 <Button
                   onClick={() => setIsAddDialogOpen(true)}
                   size="sm"
                   className="h-10 w-full text-sm font-semibold sm:w-auto"
+                  data-ocid="dashboard.primary_button"
                 >
                   <Plus className="mr-1.5 h-4 w-4" />
                   Add Device
                 </Button>
+
+                {/* NetCloud sync controls */}
+                <div className="flex flex-col items-end gap-1">
+                  <div className="flex items-center gap-1.5">
+                    <NetCloudSettingsDialog />
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-8 gap-1.5 px-3 text-xs"
+                            onClick={() => pollNetCloud.mutate()}
+                            disabled={pollNetCloud.isPending}
+                            data-ocid="netcloud.primary_button"
+                          >
+                            {pollNetCloud.isPending ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <RefreshCw className="h-3.5 w-3.5" />
+                            )}
+                            {pollNetCloud.isPending
+                              ? "Syncing…"
+                              : "Refresh from NetCloud"}
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>
+                            Pull latest device data from Cradlepoint NetCloud
+                          </p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </div>
+                  <span className="text-[11px] text-muted-foreground">
+                    {lastSyncLabel}
+                    {netCloudStatus?.lastSyncStatus
+                      ? ` · ${netCloudStatus.lastSyncStatus}`
+                      : ""}
+                  </span>
+                  {pollError && (
+                    <p
+                      className="text-[11px] text-destructive"
+                      data-ocid="netcloud.error_state"
+                    >
+                      {pollError}
+                    </p>
+                  )}
+                </div>
               </div>
 
               {/* Search Bar with Clear Button */}
@@ -308,6 +390,7 @@ export default function Dashboard() {
                     value={searchQuery}
                     onChange={handleSearchChange}
                     className="h-10 pl-9 text-sm"
+                    data-ocid="dashboard.search_input"
                   />
                 </div>
                 <TooltipProvider>
@@ -320,6 +403,7 @@ export default function Dashboard() {
                         disabled={!searchQuery}
                         className="h-10 px-3"
                         aria-label="Clear search"
+                        data-ocid="dashboard.secondary_button"
                       >
                         <X className="h-4 w-4" />
                       </Button>
@@ -342,6 +426,7 @@ export default function Dashboard() {
                   onClick={() => handleFilterChange(ControlsType.niagara)}
                   className="h-8 rounded-full px-3 text-[13px]"
                   size="sm"
+                  data-ocid="dashboard.niagara.tab"
                 >
                   Niagara ({filterCounts[ControlsType.niagara]})
                 </Button>
@@ -354,6 +439,7 @@ export default function Dashboard() {
                   onClick={() => handleFilterChange(ControlsType.reliable)}
                   className="h-8 rounded-full px-3 text-[13px]"
                   size="sm"
+                  data-ocid="dashboard.reliable.tab"
                 >
                   Reliable ({filterCounts[ControlsType.reliable]})
                 </Button>
@@ -366,6 +452,7 @@ export default function Dashboard() {
                   onClick={() => handleFilterChange(ControlsType.stock)}
                   className="h-8 rounded-full px-3 text-[13px]"
                   size="sm"
+                  data-ocid="dashboard.stock.tab"
                 >
                   Stock ({filterCounts[ControlsType.stock]})
                 </Button>
@@ -378,6 +465,7 @@ export default function Dashboard() {
                   onClick={() => handleFilterChange(ControlsType.wattmaster)}
                   className="h-8 rounded-full px-3 text-[13px]"
                   size="sm"
+                  data-ocid="dashboard.wattmaster.tab"
                 >
                   Wattmaster ({filterCounts[ControlsType.wattmaster]})
                 </Button>

@@ -166,16 +166,8 @@ const DeviceCard = memo(
           {/* Card Content */}
           <div className="space-y-2 p-3">
             {/* Status Flags */}
-            {(device.offline || device.unlicensed || device.needsAttention) && (
+            {(device.unlicensed || device.needsAttention) && (
               <div className="flex flex-wrap gap-1.5">
-                {device.offline && (
-                  <Badge
-                    variant="outline"
-                    className="h-5 border-red-500/30 bg-red-50 px-2 text-[10px] font-medium text-red-700"
-                  >
-                    Offline
-                  </Badge>
-                )}
                 {device.unlicensed && (
                   <Badge
                     variant="outline"
