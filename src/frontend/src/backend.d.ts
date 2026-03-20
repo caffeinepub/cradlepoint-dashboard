@@ -81,4 +81,7 @@ export interface backendInterface {
     toggleDeviceStatus(username: string, password: string, id: bigint): Promise<void>;
     updateDevice(username: string, password: string, id: bigint, jobName: string, ipAddress: string, dateDeployed: bigint, dateExpiration: bigint | null, notes: string, deviceAddress: string, customer: string, isActive: boolean, unitAmount: bigint, unitInfo: Array<UnitInfo>, controlsType: ControlsType, offline: boolean, unlicensed: boolean, needsAttention: boolean, anyDeskAddress: string | null, cradlepointModel: CradlepointModel | null, simCardNumber: string | null): Promise<void>;
     validateIpAddress(username: string, password: string, ipAddress: string, jobName: string, excludeDeviceId: bigint | null): Promise<boolean>;
+    getNetCloudKeyStatus(username: string, password: string): Promise<{ hasKeys: boolean; lastSyncTime: bigint; lastSyncStatus: string }>;
+    saveNetCloudKeys(username: string, password: string, cpApiId: string, cpApiKey: string, ecmApiId: string, ecmApiKey: string): Promise<void>;
+    pollNetCloud(username: string, password: string): Promise<string>;
 }
