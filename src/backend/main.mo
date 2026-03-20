@@ -67,9 +67,30 @@ actor {
     username : Text;
   };
 
-  // Device Storage
+  // -------------------------------------------------------
+  // STABLE STORAGE — survives every canister upgrade/redeploy
+  // -------------------------------------------------------
+  var stableDevices : [(Nat, Device)] = [];
+  var nextDeviceId : Nat = 1;
+
+  // Runtime map — loaded from stable storage on startup
   let devices = Map.empty<Nat, Device>();
-  var nextDeviceId = 1;
+
+  // Restore devices from stable storage on canister start
+  for ((k, v) in stableDevices.vals()) {
+    devices.add(k, v);
+    if (k >= nextDeviceId) { nextDeviceId := k + 1 };
+  };
+
+  // Persist runtime map to stable storage before every upgrade
+  system func preupgrade() {
+    stableDevices := devices.entries().toArray();
+  };
+
+  // Clear the temporary stable array after upgrade completes
+  system func postupgrade() {
+    stableDevices := [];
+  };
 
   // User profiles storage
   let userProfiles = Map.empty<Principal, UserProfile>();
@@ -209,7 +230,7 @@ actor {
     authorizeUser(username, password);
 
     switch (devices.get(id)) {
-      case (?existingDevice) {
+      case (?_existingDevice) {
         // Validate IP address uniqueness (excluding current device)
         for ((deviceId, device) in devices.entries()) {
           if (deviceId != id and device.ipAddress == ipAddress and device.jobName != jobName) {
@@ -276,8 +297,7 @@ actor {
 
   public query func getAllDevices(username : Text, password : Text) : async [Device] {
     authorizeUser(username, password);
-    let iter = devices.values();
-    iter.toArray();
+    devices.values().toArray();
   };
 
   public query func getActiveDevices(username : Text, password : Text) : async [Device] {
