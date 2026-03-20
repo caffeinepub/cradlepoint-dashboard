@@ -7,21 +7,27 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { getCredentials } from "@/lib/auth";
-import { Eye, EyeOff, Loader2, Settings } from "lucide-react";
+import { Eye, EyeOff, Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { useActor } from "../hooks/useActor";
 
-export default function NetCloudSettingsDialog() {
+interface NetCloudSettingsDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}
+
+export default function NetCloudSettingsDialog({
+  open,
+  onOpenChange,
+}: NetCloudSettingsDialogProps) {
   const { actor } = useActor();
   const { username, password } = getCredentials();
 
-  const [open, setOpen] = useState(false);
   const [cpApiId, setCpApiId] = useState("");
   const [cpApiKey, setCpApiKey] = useState("");
   const [ecmApiId, setEcmApiId] = useState("");
@@ -38,8 +44,6 @@ export default function NetCloudSettingsDialog() {
   useEffect(() => {
     if (!open || !actor) return;
     setCheckingStatus(true);
-    // Cast to any because backendInterface is a generated protected file that
-    // doesn't yet include the new NetCloud methods.
     (actor as any)
       .getNetCloudKeyStatus(username, password)
       .then((status: { hasKeys: boolean }) => {
@@ -79,7 +83,7 @@ export default function NetCloudSettingsDialog() {
       );
       setHasKeys(true);
       toast.success("NetCloud API keys saved successfully.");
-      setOpen(false);
+      onOpenChange(false);
     } catch (err: any) {
       toast.error(`Failed to save keys: ${err?.message || "Unknown error"}`);
     } finally {
@@ -88,18 +92,7 @@ export default function NetCloudSettingsDialog() {
   };
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-8 w-8 p-0"
-          aria-label="NetCloud API Settings"
-          data-ocid="netcloud.settings.open_modal_button"
-        >
-          <Settings className="h-4 w-4" />
-        </Button>
-      </DialogTrigger>
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         className="sm:max-w-md"
         data-ocid="netcloud.settings.dialog"
@@ -171,7 +164,7 @@ export default function NetCloudSettingsDialog() {
         <DialogFooter>
           <Button
             variant="outline"
-            onClick={() => setOpen(false)}
+            onClick={() => onOpenChange(false)}
             disabled={saving}
             data-ocid="netcloud.settings.cancel_button"
           >
