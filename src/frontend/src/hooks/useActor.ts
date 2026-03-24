@@ -1,5 +1,6 @@
-// useActor.ts — does NOT use Internet Identity.
-// Authentication is handled via username/password passed directly to backend methods.
+// This file creates an anonymous actor for backend calls.
+// Auth is handled by passing username/password directly to backend methods.
+// Internet Identity is NOT used here.
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import type { backendInterface } from "../backend";
@@ -20,6 +21,11 @@ export function useActor() {
   useEffect(() => {
     if (actorQuery.data) {
       queryClient.invalidateQueries({
+        predicate: (query) => {
+          return !query.queryKey.includes(ACTOR_QUERY_KEY);
+        },
+      });
+      queryClient.refetchQueries({
         predicate: (query) => {
           return !query.queryKey.includes(ACTOR_QUERY_KEY);
         },
