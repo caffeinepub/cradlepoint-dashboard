@@ -7,8 +7,6 @@ import AccessControl "authorization/access-control";
 import Principal "mo:core/Principal";
 import HttpOutcall "http-outcalls/outcall";
 
-
-
 actor {
   // Initialize the access control system
   let accessControlState = AccessControl.initState();
@@ -76,16 +74,16 @@ actor {
   // -------------------------------------------------------
   // STABLE STORAGE — survives every canister upgrade/redeploy
   // -------------------------------------------------------
-  var stableDevices : [(Nat, Device)] = [];
-  var nextDeviceId : Nat = 1;
+  stable var stableDevices : [(Nat, Device)] = [];
+  stable var nextDeviceId : Nat = 1;
 
   // NetCloud API key stable storage
-  var netCloudCpApiId : Text = "";
-  var netCloudCpApiKey : Text = "";
-  var netCloudEcmApiId : Text = "";
-  var netCloudEcmApiKey : Text = "";
-  var lastNetCloudSyncTime : Int = 0;
-  var lastNetCloudSyncStatus : Text = "";
+  stable var netCloudCpApiId : Text = "";
+  stable var netCloudCpApiKey : Text = "";
+  stable var netCloudEcmApiId : Text = "";
+  stable var netCloudEcmApiKey : Text = "";
+  stable var lastNetCloudSyncTime : Int = 0;
+  stable var lastNetCloudSyncStatus : Text = "";
 
   // Runtime map — loaded from stable storage on startup
   let devices = Map.empty<Nat, Device>();
@@ -101,15 +99,22 @@ actor {
     stableDevices := devices.entries().toArray();
   };
 
-  // Clear the temporary stable array after upgrade completes
+  // Restore from stable storage after upgrade
   system func postupgrade() {
-    stableDevices := [];
+    // Re-populate runtime map from stable storage after upgrade
+    for ((k, v) in stableDevices.vals()) {
+      devices.add(k, v);
+      if (k >= nextDeviceId) { nextDeviceId := k + 1 };
+    };
+    // Do NOT clear stableDevices here — keep it populated so the
+    // next preupgrade() has data to save. Clearing it caused data loss.
   };
 
   // User profiles storage
   let userProfiles = Map.empty<Principal, UserProfile>();
 
-  // Hardcoded admin credentials
+  // Hardcoded admin credentials — these never wipe because they are
+  // compile-time constants, not stored in heap or stable memory.
   let adminUsername = "Admin";
   let adminPassword = "Adams2014!";
 
@@ -167,7 +172,6 @@ actor {
   // NETCLOUD API KEY MANAGEMENT
   // -------------------------------------------------------
 
-  // Save NetCloud API keys (authenticated)
   public shared func saveNetCloudKeys(
     username : Text,
     password : Text,
@@ -183,7 +187,6 @@ actor {
     netCloudEcmApiKey := ecmApiKey;
   };
 
-  // Get NetCloud key status — does NOT expose raw key values
   public query func getNetCloudKeyStatus(username : Text, password : Text) : async NetCloudKeyStatus {
     authorizeUser(username, password);
     {
@@ -193,14 +196,10 @@ actor {
     };
   };
 
-  // Simple JSON helper: extract IP+connected pairs from Cradlepoint API response
-  // Response format: {"data":[{"id":"...","ip_address":"1.2.3.4","connected":true,...},...], ...}
   private func parseRouterStatuses(body : Text) : [(Text, Bool)] {
     let results = List.empty<(Text, Bool)>();
-    // Split by object boundaries to isolate individual router records
     let chunks = body.split(#text "},{");
     for (chunk in chunks) {
-      // Extract IP address value
       var ip : Text = "";
       var hasIp : Bool = false;
       let ipMarker = "ip_address\":\"";
@@ -229,7 +228,6 @@ actor {
           case (null) {};
         };
       };
-      // Extract connected status
       let isConnected = chunk.contains(#text "\"connected\":true") or
         chunk.contains(#text "\"connected\": true");
       if (hasIp) {
@@ -239,7 +237,6 @@ actor {
     results.toArray();
   };
 
-  // Poll NetCloud API and update device statuses
   public shared func pollNetCloud(username : Text, password : Text) : async Text {
     authorizeUser(username, password);
     if (netCloudCpApiId == "" or netCloudCpApiKey == "") {
@@ -260,12 +257,10 @@ actor {
       lastNetCloudSyncStatus := errMsg;
       return errMsg;
     };
-    // Parse routers from response
     let routerStatuses = parseRouterStatuses(responseBody);
     var updatedCount : Nat = 0;
     var onlineCount : Nat = 0;
     var offlineCount : Nat = 0;
-    // Update matching devices by IP address
     for ((routerIp, isConnected) in routerStatuses.vals()) {
       for ((id, device) in devices.entries()) {
         if (device.ipAddress == routerIp) {
@@ -313,7 +308,6 @@ actor {
   ) : async Nat {
     authorizeUser(username, password);
 
-    // Validate IP address uniqueness
     for ((id, device) in devices.entries()) {
       if (device.ipAddress == ipAddress and device.jobName != jobName) {
         Runtime.trap("This IP address is already used by another job");
@@ -376,7 +370,6 @@ actor {
 
     switch (devices.get(id)) {
       case (?_existingDevice) {
-        // Validate IP address uniqueness (excluding current device)
         for ((deviceId, device) in devices.entries()) {
           if (deviceId != id and device.ipAddress == ipAddress and device.jobName != jobName) {
             Runtime.trap("This IP address is already used by another job");
@@ -415,7 +408,6 @@ actor {
 
   public shared ({ caller = _ }) func toggleDeviceStatus(username : Text, password : Text, id : Nat) : async () {
     authorizeUser(username, password);
-
     switch (devices.get(id)) {
       case (?device) {
         let updatedDevice : Device = { device with isActive = not device.isActive; lastModified = Time.now() };
@@ -427,14 +419,12 @@ actor {
 
   public shared ({ caller = _ }) func deleteDevice(username : Text, password : Text, id : Nat) : async () {
     authorizeUser(username, password);
-
     if (not devices.containsKey(id)) {
       Runtime.trap("Device not found");
     };
     devices.remove(id);
   };
 
-  // Read Operations - All require authentication
   public query func getDevice(username : Text, password : Text, id : Nat) : async ?Device {
     authorizeUser(username, password);
     devices.get(id);
@@ -473,19 +463,9 @@ actor {
     for (device in devices.values()) {
       switch (deviceType) {
         case (#niagara) { if (device.controlsType == #niagara) { matchingDevices.add(device) } };
-        case (#reliable) {
-          if (device.controlsType == #reliable) {
-            matchingDevices.add(device);
-          };
-        };
-        case (#stock) {
-          if (device.controlsType == #stock) { matchingDevices.add(device) };
-        };
-        case (#wattmaster) {
-          if (device.controlsType == #wattmaster) {
-            matchingDevices.add(device);
-          };
-        };
+        case (#reliable) { if (device.controlsType == #reliable) { matchingDevices.add(device) } };
+        case (#stock) { if (device.controlsType == #stock) { matchingDevices.add(device) } };
+        case (#wattmaster) { if (device.controlsType == #wattmaster) { matchingDevices.add(device) } };
       };
     };
     matchingDevices.toArray();
@@ -502,7 +482,6 @@ actor {
 
     for (device in devices.values()) {
       if (device.isActive) { active += 1 } else { expired += 1 };
-
       switch (device.controlsType) {
         case (#niagara) { niagara += 1 };
         case (#reliable) { reliable += 1 };
@@ -541,7 +520,6 @@ actor {
     authorizeUser(username, password);
     let expiredDevices = List.empty<Device>();
     let currentTime = Time.now();
-
     for (device in devices.values()) {
       if (device.dateExpiration < currentTime) {
         expiredDevices.add(device);

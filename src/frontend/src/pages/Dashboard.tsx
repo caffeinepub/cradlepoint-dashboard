@@ -1,19 +1,16 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useAuth } from "@/hooks/useAuth";
-import { useQueryClient } from "@tanstack/react-query";
-import { Plus, RefreshCw, Search, Settings, Wifi, X } from "lucide-react";
+import { Plus, RefreshCw, Search, Wifi, X } from "lucide-react";
 import React, { useState, useMemo, useCallback } from "react";
-import { toast } from "sonner";
-import { ControlsType, type Device } from "../backend";
+import type { Device } from "../backend";
 import DeviceFormDialog from "../components/DeviceFormDialog";
 import DeviceGrid from "../components/DeviceGrid";
 import NetCloudSettingsDialog from "../components/NetCloudSettingsDialog";
 import {
   useGetActiveDevices,
   useGetDeviceCounts,
-  useGetInactiveDevices,
+  useGetExpiredDevices,
   useNetCloudStatus,
   usePollNetCloud,
 } from "../hooks/useQueries";
@@ -22,6 +19,17 @@ const DEVICES_PER_PAGE = 12;
 
 type TabType = "active" | "expired";
 type FilterType = "all" | "niagara" | "reliable" | "stock" | "wattmaster";
+
+export function normalizeControlsType(ct: unknown): string {
+  if (typeof ct === "string") return ct.toLowerCase();
+  if (typeof ct === "object" && ct !== null) {
+    if ("niagara" in (ct as object)) return "niagara";
+    if ("reliable" in (ct as object)) return "reliable";
+    if ("stock" in (ct as object)) return "stock";
+    if ("wattmaster" in (ct as object)) return "wattmaster";
+  }
+  return "";
+}
 
 class DashboardErrorBoundary extends React.Component<
   { children: React.ReactNode },
@@ -73,13 +81,10 @@ function DashboardContent() {
   const [isAddDeviceOpen, setIsAddDeviceOpen] = useState(false);
   const [isNetCloudSettingsOpen, setIsNetCloudSettingsOpen] = useState(false);
 
-  const queryClient = useQueryClient();
-  const { logout } = useAuth();
-
   const { data: activeDevices = [], isLoading: isLoadingActive } =
     useGetActiveDevices();
   const { data: inactiveDevices = [], isLoading: isLoadingInactive } =
-    useGetInactiveDevices();
+    useGetExpiredDevices();
   const { data: counts } = useGetDeviceCounts();
   const { data: netCloudStatus } = useNetCloudStatus();
   const pollNetCloud = usePollNetCloud();
@@ -96,7 +101,6 @@ function DashboardContent() {
   );
 
   const activeCount = Number(counts?.active ?? BigInt(safeActive.length));
-  const expiredCount = Number(counts?.expired ?? BigInt(safeInactive.length));
 
   const filteredActiveDevices: Device[] = useMemo(() => {
     let result = safeActive;
@@ -105,13 +109,13 @@ function DashboardContent() {
         if (!d) return false;
         switch (controlsFilter) {
           case "niagara":
-            return d.controlsType === ControlsType.niagara;
+            return normalizeControlsType(d.controlsType) === "niagara";
           case "reliable":
-            return d.controlsType === ControlsType.reliable;
+            return normalizeControlsType(d.controlsType) === "reliable";
           case "stock":
-            return d.controlsType === ControlsType.stock;
+            return normalizeControlsType(d.controlsType) === "stock";
           case "wattmaster":
-            return d.controlsType === ControlsType.wattmaster;
+            return normalizeControlsType(d.controlsType) === "wattmaster";
           default:
             return true;
         }
@@ -145,6 +149,8 @@ function DashboardContent() {
     );
   }, [safeInactive, searchQuery]);
 
+  const expiredCount = filteredExpiredDevices.length;
+
   const activeTotalPages = Math.max(
     1,
     Math.ceil(filteredActiveDevices.length / DEVICES_PER_PAGE),
@@ -164,20 +170,11 @@ function DashboardContent() {
     return filteredExpiredDevices.slice(start, start + DEVICES_PER_PAGE);
   }, [filteredExpiredDevices, expiredCurrentPage]);
 
-  const handleRefresh = useCallback(async () => {
-    await queryClient.invalidateQueries({ queryKey: ["activeDevices"] });
-    await queryClient.invalidateQueries({ queryKey: ["inactiveDevices"] });
-    await queryClient.invalidateQueries({ queryKey: ["deviceCounts"] });
-    toast.success("Refreshed");
-  }, [queryClient]);
-
   const handleClearSearch = useCallback(() => setSearchQuery(""), []);
 
   const handleNetCloudRefresh = useCallback(() => {
     pollNetCloud.mutate();
   }, [pollNetCloud]);
-
-  const isLoading = isLoadingActive || isLoadingInactive;
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6">
@@ -192,7 +189,7 @@ function DashboardContent() {
               Cradlepoint Dashboard
             </h1>
             <p className="text-xs text-muted-foreground">
-              {activeCount} active · {expiredCount} expired
+              {activeCount} active · {safeInactive.length} expired
             </p>
           </div>
         </div>
@@ -213,29 +210,6 @@ function DashboardContent() {
             </Button>
           )}
           <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setIsNetCloudSettingsOpen(true)}
-            className="h-8 text-xs"
-            title="NetCloud Settings"
-            data-ocid="netcloud.settings.open_modal_button"
-          >
-            <Settings className="h-3 w-3" />
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleRefresh}
-            disabled={isLoading}
-            className="h-8 text-xs"
-            data-ocid="dashboard.refresh.button"
-          >
-            <RefreshCw
-              className={`mr-1 h-3 w-3 ${isLoading ? "animate-spin" : ""}`}
-            />
-            Refresh
-          </Button>
-          <Button
             size="sm"
             onClick={() => setIsAddDeviceOpen(true)}
             className="h-8 text-xs"
@@ -243,15 +217,6 @@ function DashboardContent() {
           >
             <Plus className="mr-1 h-3 w-3" />
             Add Device
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={logout}
-            className="h-8 text-xs text-muted-foreground"
-            data-ocid="auth.logout.button"
-          >
-            Sign Out
           </Button>
         </div>
       </div>

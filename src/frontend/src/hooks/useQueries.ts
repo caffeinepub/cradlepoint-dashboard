@@ -220,6 +220,69 @@ export function useGetInactiveDevices() {
   });
 }
 
+// Read-only query for date-expired devices (isActive may still be true but dateExpiration < now)
+export function useGetExpiredDevices() {
+  const { actor, isFetching } = useActor();
+  const { username, password } = getCredentials();
+
+  return useQuery<Device[]>({
+    queryKey: ["expiredDevices"],
+    queryFn: async () => {
+      if (!actor) {
+        console.log(
+          "[useGetExpiredDevices] Actor not yet initialized, waiting...",
+        );
+        return [];
+      }
+
+      console.log(
+        "[useGetExpiredDevices] Fetching date-expired devices from production backend canister...",
+      );
+      try {
+        const devices = await actor.getExpiredDevices(username, password);
+        console.log(
+          `[useGetExpiredDevices] ✓ Successfully fetched ${devices.length} expired devices`,
+        );
+        return devices;
+      } catch (error: any) {
+        console.error(
+          "[useGetExpiredDevices] Failed to fetch expired devices:",
+          error,
+        );
+
+        const errorMessage = error?.message || error?.toString() || "";
+        if (
+          errorMessage.includes("stopped") ||
+          errorMessage.includes("unavailable")
+        ) {
+          console.log(
+            "[useGetExpiredDevices] ⚠️  Canister may be restarting, will retry...",
+          );
+        }
+
+        throw error;
+      }
+    },
+    enabled: !!actor && !isFetching,
+    staleTime: 30000,
+    refetchOnMount: true,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
+    retry: (failureCount, error: any) => {
+      const errorMessage = error?.message || error?.toString() || "";
+      if (errorMessage.includes("Invalid credentials")) {
+        console.log(
+          "[useGetExpiredDevices] Authentication failed - not retrying",
+        );
+        return false;
+      }
+      return failureCount < QUERY_RETRY_ATTEMPTS;
+    },
+    retryDelay: (attemptIndex) =>
+      Math.min(QUERY_RETRY_DELAY * 2 ** attemptIndex, 30000),
+  });
+}
+
 // Read-only query for device counts with enhanced fail-safe error handling and restart recovery
 export function useGetDeviceCounts() {
   const { actor, isFetching } = useActor();
@@ -412,6 +475,7 @@ export function usePollNetCloud() {
         queryClient.invalidateQueries({ queryKey: ["allDevices"] }),
         queryClient.invalidateQueries({ queryKey: ["activeDevices"] }),
         queryClient.invalidateQueries({ queryKey: ["inactiveDevices"] }),
+        queryClient.invalidateQueries({ queryKey: ["expiredDevices"] }),
         queryClient.invalidateQueries({ queryKey: ["deviceCounts"] }),
         queryClient.invalidateQueries({ queryKey: ["netCloudStatus"] }),
       ]);
@@ -496,6 +560,7 @@ export function useAddDevice() {
       );
       await queryClient.invalidateQueries({ queryKey: ["activeDevices"] });
       await queryClient.invalidateQueries({ queryKey: ["inactiveDevices"] });
+      await queryClient.invalidateQueries({ queryKey: ["expiredDevices"] });
       await queryClient.invalidateQueries({ queryKey: ["allDevices"] });
       await queryClient.invalidateQueries({ queryKey: ["deviceCounts"] });
       await queryClient.invalidateQueries({ queryKey: ["validateIpAddress"] });
@@ -592,6 +657,7 @@ export function useUpdateDevice() {
       );
       await queryClient.invalidateQueries({ queryKey: ["activeDevices"] });
       await queryClient.invalidateQueries({ queryKey: ["inactiveDevices"] });
+      await queryClient.invalidateQueries({ queryKey: ["expiredDevices"] });
       await queryClient.invalidateQueries({ queryKey: ["allDevices"] });
       await queryClient.invalidateQueries({ queryKey: ["deviceCounts"] });
       await queryClient.invalidateQueries({ queryKey: ["validateIpAddress"] });
@@ -648,6 +714,7 @@ export function useToggleDeviceStatus() {
       );
       await queryClient.invalidateQueries({ queryKey: ["activeDevices"] });
       await queryClient.invalidateQueries({ queryKey: ["inactiveDevices"] });
+      await queryClient.invalidateQueries({ queryKey: ["expiredDevices"] });
       await queryClient.invalidateQueries({ queryKey: ["allDevices"] });
       await queryClient.invalidateQueries({ queryKey: ["deviceCounts"] });
       await queryClient.invalidateQueries({ queryKey: ["currentTime"] });
@@ -699,6 +766,7 @@ export function useDeleteDevice() {
       );
       await queryClient.invalidateQueries({ queryKey: ["activeDevices"] });
       await queryClient.invalidateQueries({ queryKey: ["inactiveDevices"] });
+      await queryClient.invalidateQueries({ queryKey: ["expiredDevices"] });
       await queryClient.invalidateQueries({ queryKey: ["allDevices"] });
       await queryClient.invalidateQueries({ queryKey: ["deviceCounts"] });
       await queryClient.invalidateQueries({ queryKey: ["currentTime"] });

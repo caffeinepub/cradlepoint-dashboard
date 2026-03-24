@@ -27,8 +27,9 @@ import {
   Trash2,
 } from "lucide-react";
 import { memo, useMemo, useState } from "react";
-import { ControlsType, type Device } from "../backend";
+import type { Device } from "../backend";
 import { useDeleteDevice, useGetCurrentTime } from "../hooks/useQueries";
+import { normalizeControlsType } from "../pages/Dashboard";
 import DeviceFormDialog from "./DeviceFormDialog";
 
 interface DeviceCardProps {
@@ -48,7 +49,6 @@ const DeviceCard = memo(
     // Calculate if device is expired based on current time
     const isExpired = useMemo(() => {
       if (!currentTime) {
-        // Fallback to client-side time if backend time not available
         const now = BigInt(Date.now() * 1_000_000);
         return now > device.dateExpiration;
       }
@@ -79,7 +79,6 @@ const DeviceCard = memo(
       const days = Math.floor(diffMs / (1000 * 60 * 60 * 24));
 
       if (days < 0) {
-        // Expired
         const absDays = Math.abs(days);
         if (absDays < 30)
           return `Expired ${absDays} day${absDays !== 1 ? "s" : ""} ago`;
@@ -89,7 +88,6 @@ const DeviceCard = memo(
         const years = Math.floor(months / 12);
         return `Expired ${years} year${years !== 1 ? "s" : ""} ago`;
       }
-      // Active
       if (days < 30) return `Expires in ${days} day${days !== 1 ? "s" : ""}`;
       const months = Math.floor(days / 30);
       if (months < 12)
@@ -99,14 +97,15 @@ const DeviceCard = memo(
     }, [currentTime, device.dateExpiration]);
 
     const controlsTypeLabel = useMemo(() => {
-      switch (device.controlsType) {
-        case ControlsType.niagara:
+      const ct = normalizeControlsType(device.controlsType);
+      switch (ct) {
+        case "niagara":
           return "Niagara";
-        case ControlsType.reliable:
+        case "reliable":
           return "Reliable";
-        case ControlsType.stock:
+        case "stock":
           return "Stock";
-        case ControlsType.wattmaster:
+        case "wattmaster":
           return "Wattmaster";
         default:
           return "";
@@ -122,6 +121,10 @@ const DeviceCard = memo(
       const url = `http://${device.ipAddress}:8080`;
       window.open(url, "_blank", "noopener,noreferrer");
     };
+
+    const isWattmaster =
+      normalizeControlsType(device.controlsType) === "wattmaster";
+    const isNiagara = normalizeControlsType(device.controlsType) === "niagara";
 
     return (
       <>
@@ -211,19 +214,16 @@ const DeviceCard = memo(
             </div>
 
             {/* Any Desk Address (Wattmaster only) */}
-            {device.controlsType === ControlsType.wattmaster &&
-              device.anyDeskAddress && (
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-muted-foreground">
-                    AnyDesk:
-                  </span>
-                  <span className="text-xs font-medium text-foreground">
-                    {device.anyDeskAddress}
-                  </span>
-                </div>
-              )}
+            {isWattmaster && device.anyDeskAddress && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">AnyDesk:</span>
+                <span className="text-xs font-medium text-foreground">
+                  {device.anyDeskAddress}
+                </span>
+              </div>
+            )}
 
-            {/* Status Duration - Show "Days Active" for non-expired, "Expired" badge for expired */}
+            {/* Status Duration */}
             <div className="flex items-center gap-2">
               <Badge
                 variant="outline"
@@ -238,7 +238,7 @@ const DeviceCard = memo(
               </Badge>
             </div>
 
-            {/* Expiration Duration - Always show time until/since expiration */}
+            {/* Expiration Duration */}
             <div className="text-xs" style={{ marginTop: "0.25rem" }}>
               <span
                 className={cn(
@@ -250,10 +250,10 @@ const DeviceCard = memo(
               </span>
             </div>
 
-            {/* Action Buttons - Stacked Vertically */}
+            {/* Action Buttons */}
             <div className="flex flex-col gap-2 pt-1">
               {/* Visit Job Site (Niagara only) */}
-              {device.controlsType === ControlsType.niagara &&
+              {isNiagara &&
                 device.unitInfo.length > 0 &&
                 (device.unitInfo.length === 1 ? (
                   <Button
@@ -441,7 +441,6 @@ const DeviceCard = memo(
     );
   },
   (prevProps, nextProps) => {
-    // Custom comparison function for memo
     return (
       prevProps.device.id === nextProps.device.id &&
       prevProps.isActive === nextProps.isActive &&
